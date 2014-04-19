@@ -1,0 +1,2 @@
+: test.c |> gcc -g %f -o %o |> test
+: mymalloc.c |> gcc -g -shared -fpic -o %o %f |> mymalloc.so

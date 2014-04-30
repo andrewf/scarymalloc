@@ -23,15 +23,18 @@ typedef struct memoryChunk_t {
 
 const int FIRSTBUCKETCEILING = (8); //1*ALIGNMENT;
 
-blockHeader* physicalBlocks = 0;
+memoryChunk* physicalBlocks = 0;
 
 /*
    Buckets are allocated like so: first bucket/freelist is
    for blocks of payload size 0 to FIRSTBUCKETCEILING. next is
    from (FBC, 2*FBC], (2*FBC, 4*FBC], etc., except the last one is
    just whatever won't fit in previous buckets.
+
+   Array is of bucket objects so when first object wants to unlink itself
+   it doesn't have to check special case of being at front. 
 */
-blockHeader* buckets[NUMBUCKETS] = {0};
+blockHeader buckets[NUMBUCKETS] = {{0,0,0,{'\0'}}};
 
 size_t mylog2(size_t foo) {
     int n = 0;

@@ -149,6 +149,7 @@ blockHeader* newMemoryChunk(size_t minSize) {
         }
     };
     // newBreak != 0, with length allocationSize
+    // TODO don't assume sbrk is aligned
     // coallesce with previous block if possible
     if(latestPhysicalBlock &&
             (latestPhysicalBlock + CHUNK_OVERHEAD + latestPhysicalBlock->size) == newBreak) {
@@ -211,12 +212,19 @@ void reBucketBlock(blockHeader* block) {
     // so size comparisons don't need special cases at ends
 }
 
+void splitBlock(blockHeader* block, size_t s) {
+    assert(block->size >= s);
+    // TODO: actually do this, and rebucket leftovers, assuming it's actually
+    // possible
+}
+    
+
 void* malloc(size_t s) {
     void* ret = 0;
     int i;
     // worst malloc ever
     if(!s) { return 0; }
-    printf("mallocing %lu bytes\n", s);
+    //printf("mallocing %lu bytes\n", s);
     // this is where you start searching through the freelists
     int bucket = getBucket(s);
     for(i=bucket; i<NUMBUCKETS; ++i) {
@@ -229,15 +237,17 @@ void* malloc(size_t s) {
         // if we found a block
         if(currBlock) {
             // split, etc
-            //ret = the thingy;
-            // bucket the leftovers
+            splitBlock(currBlock, s);
+            ret = getBlockPayload(currBlock);
         }
     }
     if(!ret) {
         // no free blocks suitable, must go for new memory
         blockHeader* newBlock = newMemoryChunk(s);
         // split the block
+        splitBlock(newBlock, s);
         // bucket the leftovers, if they're big enough
+        ret = getBlockPayload(newBlock);
     }
     return ret;
 }

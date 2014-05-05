@@ -3,3 +3,4 @@
 *.sw[po]
 .tup
 test
+unittest

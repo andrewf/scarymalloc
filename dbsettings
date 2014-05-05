@@ -1,0 +1,3 @@
+set exec-wrapper env 'LD_PRELOAD=./mymalloc.so'
+set breakpoint pending on
+break mymalloc.c:malloc

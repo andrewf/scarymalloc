@@ -14,7 +14,6 @@ void use(void* buf, size_t s) {
 
 int main(int argc, char** args) {
     void* ptrs[NUMPTRS];
-    int wrapped = 0;
     int i = 0;
     size_t n = 0;
     for(i=0; i<NUMPTRS; ++i) {
@@ -36,5 +35,6 @@ int main(int argc, char** args) {
     for(i=0; i<NUMPTRS; ++i) {
         free(ptrs[i]);
     }
-    printf("done. cool!\n");
+    //printf("done. cool!\n");
+    return 0;
 }

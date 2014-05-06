@@ -91,7 +91,7 @@ size_t next_aligned_value(size_t n) {
     // the smallest value x >= n so x & ALIGNMENT = 0
     if(n % ALIGNMENT) {
         // there are low bits
-        return (n+ALIGNMENT)%ALIGNMENT;
+        return ((n+ALIGNMENT)/ALIGNMENT)*ALIGNMENT;
     }
     return n;
 }
@@ -188,7 +188,9 @@ blockHeader* newMemoryChunk(size_t minSize) {
     // note that minSize is a payload size.
     // create new block with sbrk
     void* newBreak = 0;    // this is a terrible name
-    minSize = next_aligned_value(minSize);
+    // make sure minsize is aligned, and will still be big enough if
+    // the sbrk number has to be re-aligned
+    minSize = next_aligned_value(minSize) + ALIGNMENT;
     minSize += BLOCK_OVERHEAD + CHUNK_OVERHEAD;
     size_t allocationSize;
     // try the largest of MIN_PHYSICAL_BLOCK and minSize
@@ -214,7 +216,9 @@ blockHeader* newMemoryChunk(size_t minSize) {
         }
     };
     // newBreak != 0, with length allocationSize
-    // TODO don't assume sbrk is aligned
+    // don't assume sbrk is aligned (can move newBreak up by <= ALIGNMENT - 1,
+    // so that's why we inflate the minSize
+    newBreak = (void*)next_aligned_value((uintptr_t)newBreak);
     // coallesce with previous block if possible
     if(latestPhysicalBlock &&
             (latestPhysicalBlock + CHUNK_OVERHEAD + latestPhysicalBlock->size) == newBreak) {
@@ -337,8 +341,9 @@ int main() {
     assert(sizeof(blockHeader) % ALIGNMENT == 0);
     assert(sizeof(memoryChunk) == (sizeof(size_t) + sizeof(memoryChunk*)));
     assert(sizeof(memoryChunk) % ALIGNMENT == 0);
-    // figure out alignment somehow?
-    printf("!!5 -> %d (should be 1)\n", !!5);
+    printf("10 -align-> %lu\n", next_aligned_value(10));
+    printf("16 -align-> %lu\n", next_aligned_value(16));
+    printf("17 -align-> %lu\n", next_aligned_value(17));
     printf("sizeof(size_t) %lu\n", sizeof(size_t));
     printf("sizeof(void*) %lu\n", sizeof(void*));
     printf("sizeof(uintptr_t) %lu\n", sizeof(uintptr_t));

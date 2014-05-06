@@ -1,18 +1,32 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <assert.h>
+#include <inttypes.h>
 
 /////////////////////////
 // CONSTANTS/TYPES
 /////////////////////////
 
 #define NUMBUCKETS 32 // can't go too far above bit size... be pessimistic
-#define MIN_PHYSICAL_BLOCK 0x10000   // whatever
+#define MIN_PHYSICAL_BLOCK 0x100   // whatever
 
-const int ALLOCATED_MASK = 1;  // & this with something to find if block is allocated
+const unsigned long LOWESTBIT = (1ul);  // & this with something to find if block is allocated
+const unsigned long HIGHBITS = (~(1ul));
 
-const int ALIGNMENT = 16;  // for 64-bit, apparently
+#define MASKED_VALUE(n) (n & HIGHBITS)
 
+const int ALIGNMENT = 16u;  // for 64-bit, apparently
+
+/*
+   Header for a memory block.
+   Whether block is allocated is lowest bit of logicalPrev
+   Whether there's a previous physical block to merge with is
+   stored as the lowest bit of size.
+   Whether there's a next physical block is stored as lowest bit
+   of footer size.
+   For all these values, you have to & them with HIGHBITS to get the 
+   value to do actual math with.
+*/
 typedef struct blockHeader_t {
     struct blockHeader_t* logicalPrev;  // previous in size-bucket free-list
     struct blockHeader_t* logicalNext;  // next in,.. you know
@@ -73,6 +87,15 @@ size_t pow2(size_t foo) {
     return 1 << foo;
 }
 
+size_t next_aligned_value(size_t n) {
+    // the smallest value x >= n so x & ALIGNMENT = 0
+    if(n % ALIGNMENT) {
+        // there are low bits
+        return (n+ALIGNMENT)%ALIGNMENT;
+    }
+    return n;
+}
+
 int getBucket(size_t s) {
     // think of this as a hash function
     size_t lastCeiling = FIRSTBUCKETCEILING*pow2(NUMBUCKETS - 2);
@@ -91,8 +114,7 @@ blockHeader* newBlock(void* blockPosition) {
     b->logicalPrev = 0;
     b->logicalNext = 0;
     b->size = 0;
-    // take size, also set end size?
-    // bit flags?
+    // caller must set footer, bit flags
     return b;
 }
 
@@ -105,12 +127,54 @@ size_t* getFooter(blockHeader* block) {
     return (size_t*)((void*)block + block->size);
 }
 
+// accessors for bitfields of blockHeader
+void setHasPhysicalPrev(blockHeader* block, int has){
+    if(has) {
+        block->size = block->size | LOWESTBIT;
+    } else {
+        // unset
+        block->size = block->size & HIGHBITS; // only keep high bits
+    }
+}
+int getHasPhysicalPrev(blockHeader* block) {
+    return !!(block->size & LOWESTBIT);
+}
+
+void setHasPhysicalNext(blockHeader* block, int has){
+    size_t* foot = getFooter(block);
+    if(has) {
+        *foot = *foot | LOWESTBIT;
+    } else {
+        *foot = *foot & HIGHBITS;
+    }
+}
+int getHasPhysicalNext(blockHeader* block) {
+    size_t* foot = getFooter(block);
+    return !!(*foot & LOWESTBIT);
+}
+
+void setAllocated(blockHeader* block, int allocated) {
+    if(allocated) {
+        block->logicalPrev = (blockHeader*)((uintptr_t)block->logicalPrev | LOWESTBIT);
+    } else {
+        block->logicalPrev = (blockHeader*)((uintptr_t)block->logicalPrev & HIGHBITS);
+    }
+}
+int isAllocated(blockHeader* block) {
+    return !!((uintptr_t)block->logicalPrev & LOWESTBIT);
+}
+
+
 void setBlockSize(blockHeader* block, size_t s) {
     // make darn sure there's room for size_t + sizeof(size_t)
     // bytes after the block header
+    // preserves hasPhysicalPrev bit, does nothing for physNext
+    int hadPhysPrev = getHasPhysicalPrev(block);
     block->size = s;
+    setHasPhysicalPrev(block, hadPhysPrev);
     size_t* footer = getFooter(block);
     *footer = s;
+    // we don't know how to set hasPhysicalNext in this fn, must be done by caller
 }
 
 void* getChunkPayload(memoryChunk* chunk) {
@@ -124,6 +188,7 @@ blockHeader* newMemoryChunk(size_t minSize) {
     // note that minSize is a payload size.
     // create new block with sbrk
     void* newBreak = 0;    // this is a terrible name
+    minSize = next_aligned_value(minSize);
     minSize += BLOCK_OVERHEAD + CHUNK_OVERHEAD;
     size_t allocationSize;
     // try the largest of MIN_PHYSICAL_BLOCK and minSize
@@ -156,13 +221,13 @@ blockHeader* newMemoryChunk(size_t minSize) {
         // to extend the old block with new data, we'll need to save it
         // footer is at last eight bytes of latestPhysicalBlock
         size_t* oldFooter = getChunkPayload(latestPhysicalBlock) +
-                            latestPhysicalBlock->size -
+                            MASKED_VALUE(latestPhysicalBlock->size) -
                             sizeof(size_t);
         blockHeader* oldBlock =
-            (blockHeader*)((void*)oldFooter - *oldFooter - sizeof(blockHeader));
+            (blockHeader*)((void*)oldFooter - MASKED_VALUE(*oldFooter) - sizeof(blockHeader));
         latestPhysicalBlock->size += allocationSize; // new memory is pure payload
         // now extend the block
-        oldBlock->size += allocationSize;
+        oldBlock->size += allocationSize; // add preserves low bits
         *getFooter(oldBlock) = oldBlock->size;
         return oldBlock;
     } else {
@@ -178,11 +243,14 @@ blockHeader* newMemoryChunk(size_t minSize) {
 }
 
 void logicalUnlinkBlock(blockHeader* block) {
+    // okay that this wipes out allocation bit, since this is only
+    // called on unallocated blocks
     block->logicalPrev->logicalNext = block->logicalNext;
-    block->logicalNext->logicalPrev = block->logicalPrev;
+    block->logicalNext->logicalPrev = (blockHeader*)MASKED_VALUE((uintptr_t)block->logicalPrev);
 }
 
 void logicalLinkBlock(blockHeader* newPrev, blockHeader* block) {
+    // insert block after newPrev. newPrev -> block -> newPrev's old next
     block->logicalPrev = newPrev;
     block->logicalNext = newPrev->logicalNext; // maybe null, we don't care
     newPrev->logicalNext = block;
@@ -190,17 +258,19 @@ void logicalLinkBlock(blockHeader* newPrev, blockHeader* block) {
 
 void reBucketBlock(blockHeader* block) {
     // most likely, block has been newly split (or coallesced)
-    int destBucket = getBucket(block->size);
+    int destBucket = getBucket(MASKED_VALUE(block->size));
     // unlink it from freelist chain
     logicalUnlinkBlock(block);
     // go through destBucket and find correct location
     blockHeader* currBlock = &buckets[destBucket];
-    while(currBlock->logicalNext && (currBlock->logicalNext->size < block->size) ) {
+    while(currBlock->logicalNext &&
+          (MASKED_VALUE(currBlock->logicalNext->size) < MASKED_VALUE(block->size)) ) {
         currBlock = currBlock->logicalNext;
     }
     // currBlock is non-null by construction
     // insert as currBlock->logicalNext
     logicalLinkBlock(currBlock, block);
+
     // hypothetically nicer algorithm
     //if(currBucketIndex != destBucket) {
     //    // unlink it
@@ -213,7 +283,7 @@ void reBucketBlock(blockHeader* block) {
 }
 
 void splitBlock(blockHeader* block, size_t s) {
-    assert(block->size >= s);
+    assert(MASKED_VALUE(block->size) >= s);
     // TODO: actually do this, and rebucket leftovers, assuming it's actually
     // possible
 }
@@ -222,7 +292,7 @@ void splitBlock(blockHeader* block, size_t s) {
 void* malloc(size_t s) {
     void* ret = 0;
     int i;
-    // worst malloc ever
+    s = next_aligned_value(s);
     if(!s) { return 0; }
     //printf("mallocing %lu bytes\n", s);
     // this is where you start searching through the freelists
@@ -249,12 +319,13 @@ void* malloc(size_t s) {
         // bucket the leftovers, if they're big enough
         ret = getBlockPayload(newBlock);
     }
+    printf("malloc returning %p\n", ret);
     return ret;
 }
 
 void free(void* p) {
     if(p)
-        printf("free? ha! are you kidding?\n");
+        printf("freeing %p\n", p);
 }
 
 #ifdef TESTIT
@@ -267,8 +338,10 @@ int main() {
     assert(sizeof(memoryChunk) == (sizeof(size_t) + sizeof(memoryChunk*)));
     assert(sizeof(memoryChunk) % ALIGNMENT == 0);
     // figure out alignment somehow?
+    printf("!!5 -> %d (should be 1)\n", !!5);
     printf("sizeof(size_t) %lu\n", sizeof(size_t));
     printf("sizeof(void*) %lu\n", sizeof(void*));
+    printf("sizeof(uintptr_t) %lu\n", sizeof(uintptr_t));
     printf("log2(9) = %lu\n", mylog2(9));
     printf("s=%d --> b=%d\n", 7, getBucket(7));
     printf("s=%d --> b=%d\n", 8, getBucket(8));

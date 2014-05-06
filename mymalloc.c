@@ -284,9 +284,13 @@ blockHeader* newMemoryChunk(size_t minSize) {
 void logicalUnlinkBlock(blockHeader* block) {
     // okay that this wipes out allocation bit, since this is only
     // called on unallocated blocks
-    // does this need to work on unlinked blocks?
+    // logicalPrev is always valid, since we start with anchor elements in
+    // buckets array, and we never try to unlink those
+    assert(block->logicalPrev);
     block->logicalPrev->logicalNext = block->logicalNext;
-    block->logicalNext->logicalPrev = (blockHeader*)MASKED_VALUE((uintptr_t)block->logicalPrev);
+    if(block->logicalNext) {
+        block->logicalNext->logicalPrev = (blockHeader*)MASKED_VALUE((uintptr_t)block->logicalPrev);
+    }
 }
 
 void logicalLinkBlock(blockHeader* newPrev, blockHeader* block) {
@@ -372,6 +376,7 @@ void* malloc(size_t s) {
             // unlink if necessary
             splitBlock(currBlock, s);
             setAllocated(currBlock, 1);
+            logicalUnlinkBlock(currBlock);
             ret = getBlockPayload(currBlock);
         }
     }

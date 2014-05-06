@@ -34,7 +34,14 @@ typedef struct blockHeader_t {
     size_t pad;    // for 16-byte alignment
 } blockHeader; // end of data is the size footer, also size_t
 
-#define BLOCK_OVERHEAD (sizeof(blockHeader) + sizeof(size_t))
+typedef struct blockFooter_t {
+    size_t pad; // we want this struct's size to be a multiple of ALIGNMENT (16),
+                // and we may as well have this otherwise useless eight bytes at the
+                // front as a shield against heap corruption
+    size_t size;
+} blockFooter;
+
+#define BLOCK_OVERHEAD (sizeof(blockHeader) + sizeof(blockFooter))
 
 typedef struct memoryChunk_t {
     size_t size; // size of memory AFTER this struct. again, payload
@@ -54,7 +61,7 @@ const int FIRSTBUCKETCEILING = (16); //1*ALIGNMENT;
    Linked list of physical memory chunks, with embedded metadata like
    the memory blocks.
 */
-memoryChunk* latestPhysicalBlock = 0;
+memoryChunk* latestPhysicalChunk = 0;
 
 /*
    Buckets are allocated like so: first bucket/freelist is
@@ -109,7 +116,7 @@ int getBucket(size_t s) {
     return mylog2(prelog);
 }
 
-blockHeader* newBlock(void* blockPosition) {
+blockHeader* initNewBlock(void* blockPosition) {
     blockHeader* b = (blockHeader*)blockPosition;
     b->logicalPrev = 0;
     b->logicalNext = 0;
@@ -122,9 +129,9 @@ void* getBlockPayload(blockHeader* block) {
     return (void*)block + sizeof(blockHeader);
 }
 
-size_t* getFooter(blockHeader* block) {
+blockFooter* getFooter(blockHeader* block) {
     // only assumes header size is valid
-    return (size_t*)((void*)block + block->size);
+    return (blockFooter*)(getBlockPayload(block) + MASKED_VALUE(block->size));
 }
 
 // accessors for bitfields of blockHeader
@@ -141,16 +148,16 @@ int getHasPhysicalPrev(blockHeader* block) {
 }
 
 void setHasPhysicalNext(blockHeader* block, int has){
-    size_t* foot = getFooter(block);
+    blockFooter* foot = getFooter(block);
     if(has) {
-        *foot = *foot | LOWESTBIT;
+        foot->size = foot->size | LOWESTBIT;
     } else {
-        *foot = *foot & HIGHBITS;
+        foot->size = foot->size & HIGHBITS;
     }
 }
 int getHasPhysicalNext(blockHeader* block) {
-    size_t* foot = getFooter(block);
-    return !!(*foot & LOWESTBIT);
+    blockFooter* foot = getFooter(block);
+    return !!(foot->size & LOWESTBIT);
 }
 
 void setAllocated(blockHeader* block, int allocated) {
@@ -166,14 +173,14 @@ int isAllocated(blockHeader* block) {
 
 
 void setBlockSize(blockHeader* block, size_t s) {
-    // make darn sure there's room for size_t + sizeof(size_t)
+    // make darn sure there's room for size_t + sizeof(blockFooter)
     // bytes after the block header
     // preserves hasPhysicalPrev bit, does nothing for physNext
     int hadPhysPrev = getHasPhysicalPrev(block);
     block->size = s;
     setHasPhysicalPrev(block, hadPhysPrev);
-    size_t* footer = getFooter(block);
-    *footer = s;
+    blockFooter* footer = getFooter(block);
+    footer->size = s;
     // we don't know how to set hasPhysicalNext in this fn, must be done by caller
 }
 
@@ -187,59 +194,87 @@ blockHeader* newMemoryChunk(size_t minSize) {
     // leave new physical chunk in global list
     // note that minSize is a payload size.
     // create new block with sbrk
-    void* newBreak = 0;    // this is a terrible name
+    void* chunkStart = 0;    // the return from sbrk
     // make sure minsize is aligned, and will still be big enough if
-    // the sbrk number has to be re-aligned
+    // the sbrk address has to be re-aligned
     minSize = next_aligned_value(minSize) + ALIGNMENT;
     minSize += BLOCK_OVERHEAD + CHUNK_OVERHEAD;
     size_t allocationSize;
     // try the largest of MIN_PHYSICAL_BLOCK and minSize
     if(minSize < MIN_PHYSICAL_BLOCK) {
         allocationSize = MIN_PHYSICAL_BLOCK;
-        newBreak = sbrk(MIN_PHYSICAL_BLOCK);
     } else {
+        // minSize >= MIN_PHYSICAL_BLOCK
         allocationSize = minSize;
-        newBreak = sbrk(minSize);
     }
-    if(!newBreak) {
+    chunkStart = sbrk(allocationSize);
+    if(!chunkStart) {
         // crap, failed to alloc
         if(allocationSize > minSize) {
             // we might be able to salvage by only allocating min size
-            newBreak = sbrk(minSize);
-            if(!newBreak) {
+            chunkStart = sbrk(minSize);
+            allocationSize = minSize;
+            if(!chunkStart) {
                 // that's it
                 return 0;
             }
         } else {
-            // no recourse
+            // no recourse, we already tried the smallest possible chunk
             return 0;
         }
     };
-    // newBreak != 0, with length allocationSize
-    // don't assume sbrk is aligned (can move newBreak up by <= ALIGNMENT - 1,
+    // chunkStart != 0, with length allocationSize
+    // don't assume sbrk is aligned (can move chunkStart up by <= ALIGNMENT - 1,
     // so that's why we inflate the minSize
-    newBreak = (void*)next_aligned_value((uintptr_t)newBreak);
-    // coallesce with previous block if possible
-    if(latestPhysicalBlock &&
-            (latestPhysicalBlock + CHUNK_OVERHEAD + latestPhysicalBlock->size) == newBreak) {
+    printf("sbrk'd %p with size %#lx\n", chunkStart, allocationSize);
+    void* chunkEnd = chunkStart + allocationSize; // this one we'll round down to alignment
+    chunkStart = (void*)next_aligned_value((uintptr_t)chunkStart);
+    chunkEnd = (void*)( ((uintptr_t)chunkEnd)/ALIGNMENT*ALIGNMENT ); // round down to next *lowest* multiple of ALIGNMENT
+    allocationSize = chunkEnd - chunkStart; // real, usable, aligned space
+    assert(allocationSize >= minSize);
+    assert(allocationSize % ALIGNMENT == 0);
+    // coallesce with previously allocated chunk if possible
+    if(latestPhysicalChunk &&
+            (latestPhysicalChunk + CHUNK_OVERHEAD + latestPhysicalChunk->size) == chunkStart) {
         // to extend the old block with new data, we'll need to save it
-        // footer is at last eight bytes of latestPhysicalBlock
-        size_t* oldFooter = getChunkPayload(latestPhysicalBlock) +
-                            MASKED_VALUE(latestPhysicalBlock->size) -
-                            sizeof(size_t);
-        blockHeader* oldBlock =
-            (blockHeader*)((void*)oldFooter - MASKED_VALUE(*oldFooter) - sizeof(blockHeader));
-        latestPhysicalBlock->size += allocationSize; // new memory is pure payload
-        // now extend the block
-        oldBlock->size += allocationSize; // add preserves low bits
-        *getFooter(oldBlock) = oldBlock->size;
-        return oldBlock;
+        // footer is at last ALIGNMENT bytes of latestPhysicalChunk
+        printf("  merging with last phys chunk\n");
+        blockFooter* oldFooter = getChunkPayload(latestPhysicalChunk) +
+                            latestPhysicalChunk->size -
+                            sizeof(blockFooter);
+        blockHeader* oldBlock = (blockHeader*)((void*)oldFooter
+                                              - MASKED_VALUE(oldFooter->size)
+                                              - sizeof(blockHeader));
+        // extend the physical chunk
+        latestPhysicalChunk->size += allocationSize; // new memory is pure payload
+        // now extend the block if free, otherwise create a new one
+        if(isAllocated(oldBlock)) {
+            // we need a new block anyway
+            // it does have a physical prev, no physical next
+            blockHeader* newBlock = initNewBlock(chunkStart);
+            // set the footer
+            setBlockSize(newBlock, allocationSize - CHUNK_OVERHEAD - BLOCK_OVERHEAD);
+            // physical adjacency stuff
+            setHasPhysicalPrev(newBlock, 1);
+            setHasPhysicalNext(newBlock, 0);
+            setHasPhysicalNext(oldBlock, 1); // now it does, anyway
+            // that's all, it's ready to split (but not logically linked)
+            return newBlock;
+        } else {
+            // addition preserves low bits (including phys prev flag)
+            oldBlock->size += allocationSize;
+            getFooter(oldBlock)->size = oldBlock->size;
+            // oldBlock doesn't have physical next, so we're done
+            return oldBlock;
+        }
     } else {
         // we've got to do it all fresh
-        memoryChunk* newChunk = (memoryChunk*)newBreak;
-        newChunk->older = latestPhysicalBlock;
+        printf("  making new phys chunk\n");
+        memoryChunk* newChunk = (memoryChunk*)chunkStart;
+        newChunk->older = latestPhysicalChunk;
         newChunk->size = allocationSize - CHUNK_OVERHEAD;
-        blockHeader* newBlock = (blockHeader*)getChunkPayload(newChunk);
+        latestPhysicalChunk = newChunk;
+        blockHeader* newBlock = initNewBlock(getChunkPayload(newChunk));
         setBlockSize(newBlock, newChunk->size - BLOCK_OVERHEAD);
         return newBlock;
     }
@@ -249,6 +284,7 @@ blockHeader* newMemoryChunk(size_t minSize) {
 void logicalUnlinkBlock(blockHeader* block) {
     // okay that this wipes out allocation bit, since this is only
     // called on unallocated blocks
+    // does this need to work on unlinked blocks?
     block->logicalPrev->logicalNext = block->logicalNext;
     block->logicalNext->logicalPrev = (blockHeader*)MASKED_VALUE((uintptr_t)block->logicalPrev);
 }
@@ -256,15 +292,17 @@ void logicalUnlinkBlock(blockHeader* block) {
 void logicalLinkBlock(blockHeader* newPrev, blockHeader* block) {
     // insert block after newPrev. newPrev -> block -> newPrev's old next
     block->logicalPrev = newPrev;
-    block->logicalNext = newPrev->logicalNext; // maybe null, we don't care
+    block->logicalNext = newPrev->logicalNext;
+    if(block->logicalNext) {
+        block->logicalNext->logicalPrev = block;
+    }
     newPrev->logicalNext = block;
 }
 
 void reBucketBlock(blockHeader* block) {
+    // must already be unlinked
     // most likely, block has been newly split (or coallesced)
     int destBucket = getBucket(MASKED_VALUE(block->size));
-    // unlink it from freelist chain
-    logicalUnlinkBlock(block);
     // go through destBucket and find correct location
     blockHeader* currBlock = &buckets[destBucket];
     while(currBlock->logicalNext &&
@@ -288,15 +326,35 @@ void reBucketBlock(blockHeader* block) {
 
 void splitBlock(blockHeader* block, size_t s) {
     assert(MASKED_VALUE(block->size) >= s);
+    assert(s % ALIGNMENT == 0);
     // TODO: actually do this, and rebucket leftovers, assuming it's actually
     // possible
+    // after carving out a new payload, there needs to be enough left
+    size_t leftover_bytes = MASKED_VALUE(block->size) - s - BLOCK_OVERHEAD; // amount that would actually be left for payload
+    if(!leftover_bytes) {
+        // don't even bother
+        return;
+    }
+    // leftover_bytes is at least ALIGNMENT, so proceed
+    int hadPhysNext = getHasPhysicalNext(block);
+    setBlockSize(block, s);
+    blockHeader* newBlock = initNewBlock((void*)block + s + BLOCK_OVERHEAD);
+    setBlockSize(newBlock, leftover_bytes);  // set up the footer
+    // physical adjacency
+    setHasPhysicalNext(block, 1);    // definitely does now
+    setHasPhysicalPrev(newBlock, 1);
+    setHasPhysicalNext(newBlock, hadPhysNext); // pass on original hasPhysNext-ness
+                                               // to latter block
+    reBucketBlock(newBlock);
+    // don't rebucket (the original) block, since we're about to fill it
 }
     
 
 void* malloc(size_t s) {
     void* ret = 0;
     int i;
-    s = next_aligned_value(s);
+    s = next_aligned_value(s); // we only want to allocate aligned-size blocks, to keep
+                               // all the headers and payloads aligned
     if(!s) { return 0; }
     //printf("mallocing %lu bytes\n", s);
     // this is where you start searching through the freelists
@@ -311,7 +369,9 @@ void* malloc(size_t s) {
         // if we found a block
         if(currBlock) {
             // split, etc
+            // unlink if necessary
             splitBlock(currBlock, s);
+            setAllocated(currBlock, 1);
             ret = getBlockPayload(currBlock);
         }
     }
@@ -319,11 +379,13 @@ void* malloc(size_t s) {
         // no free blocks suitable, must go for new memory
         blockHeader* newBlock = newMemoryChunk(s);
         // split the block
+        // here the block will not be in a free list yet
         splitBlock(newBlock, s);
+        setAllocated(newBlock, 1);
         // bucket the leftovers, if they're big enough
         ret = getBlockPayload(newBlock);
     }
-    printf("malloc returning %p\n", ret);
+    printf("malloc returning %p for size %lu\n", ret, s);
     return ret;
 }
 
@@ -337,8 +399,13 @@ void free(void* p) {
 #include <stdio.h>
 
 int main() {
+    // make sure the compiler isn't doing any weird padding
+    // and everything will align right
     assert(sizeof(blockHeader) == (2*sizeof(void*) + 2*sizeof(size_t)));
+    assert(sizeof(blockFooter) == (2*sizeof(size_t)));
     assert(sizeof(blockHeader) % ALIGNMENT == 0);
+    assert(sizeof(blockFooter) % ALIGNMENT == 0);
+    assert(sizeof(BLOCK_OVERHEAD) % ALIGNMENT == 0);
     assert(sizeof(memoryChunk) == (sizeof(size_t) + sizeof(memoryChunk*)));
     assert(sizeof(memoryChunk) % ALIGNMENT == 0);
     printf("10 -align-> %lu\n", next_aligned_value(10));

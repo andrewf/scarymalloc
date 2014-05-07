@@ -5,17 +5,17 @@
 #define NUMPTRS 10
 #endif
 
-void use(void* buf, size_t s) {
+void use(char* buf, size_t s) {
     size_t i;
     for(i=0; i<s; ++i) {
-        ((char*)buf)[i] = (char)(i%256);
+        buf[i] = (char)(i%256);
     }
 }
 
-void check(void* buf, size_t s) {
+void check(char* buf, size_t s) {
     size_t i;
     for(i=0; i<s; ++i) {
-        if( ((char*)buf)[i] != (char)(i%256) ) {
+        if( buf[i] != (char)(i%256) ) {
             printf("memory corruption at %p, base addr %p\n", buf + i, buf);
         }
     }

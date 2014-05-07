@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <assert.h>
+#include <errno.h>
 #include <inttypes.h>
 
 /////////////////////////
@@ -362,7 +363,7 @@ void splitBlock(blockHeader* block, size_t s) {
     
 
 void* malloc(size_t s) {
-    void* ret = 0;
+    blockHeader* returnedBlock = 0;
     int i;
     s = next_aligned_value(s); // we only want to allocate aligned-size blocks, to keep
                                // all the headers and payloads aligned
@@ -384,27 +385,48 @@ void* malloc(size_t s) {
             splitBlock(currBlock, s);
             setAllocated(currBlock, 1);
             logicalUnlinkBlock(currBlock);
-            ret = getBlockPayload(currBlock);
+            returnedBlock = currBlock;
+            break;
         }
     }
-    if(!ret) {
+    if(!returnedBlock) {
         // no free blocks suitable, must go for new memory
         blockHeader* newBlock = newMemoryChunk(s);
+        if(!newBlock) {
+            // well, crap then
+            // printf("failed to malloc\n");
+            errno = ENOMEM;
+            return 0;
+        }
         // split the block
         // here the block will not be in a free list yet
         splitBlock(newBlock, s);
         // now the leftovers are in free list
         setAllocated(newBlock, 1);
         // bucket the leftovers, if they're big enough
-        ret = getBlockPayload(newBlock);
+        returnedBlock = newBlock;
     }
-    printf("malloc returning %p for size %lu\n", ret, s);
-    return ret;
+    printf("malloc returning %p for size %lu\n", getBlockPayload(returnedBlock), s);
+    setAllocated(returnedBlock, 1);
+    return getBlockPayload(returnedBlock);
+}
+
+blockHeader* coallesce(blockHeader* b) {
+    // merge with physical next and previous, if they exist
+    // and are unallocated. DO NOT put on free list
+    // TODO implement
+    return b;
 }
 
 void free(void* p) {
-    if(p)
-        printf("freeing %p\n", p);
+    if(!p) {
+        return;
+    }
+    printf("freeing %p\n", p);
+    blockHeader* block = (blockHeader*)( (char*)p - sizeof(blockHeader) );
+    setAllocated(block, 0);
+    block = coallesce(block);
+    reBucketBlock(block);
 }
 
 #ifdef TESTIT
@@ -418,9 +440,10 @@ int main() {
     assert(sizeof(blockFooter) == (2*sizeof(size_t)));
     assert(sizeof(blockHeader) % ALIGNMENT == 0);
     assert(sizeof(blockFooter) % ALIGNMENT == 0);
-    assert(sizeof(BLOCK_OVERHEAD) % ALIGNMENT == 0);
+    assert(BLOCK_OVERHEAD % ALIGNMENT == 0);
     assert(sizeof(memoryChunk) == (sizeof(size_t) + sizeof(memoryChunk*)));
     assert(sizeof(memoryChunk) % ALIGNMENT == 0);
+    printf("1 -align-> %lu\n", next_aligned_value(1));
     printf("10 -align-> %lu\n", next_aligned_value(10));
     printf("16 -align-> %lu\n", next_aligned_value(16));
     printf("17 -align-> %lu\n", next_aligned_value(17));

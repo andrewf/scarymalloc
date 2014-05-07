@@ -14,6 +14,7 @@ const unsigned long LOWESTBIT = (1ul);  // & this with something to find if bloc
 const unsigned long HIGHBITS = (~(1ul));
 
 #define MASKED_VALUE(n) (n & HIGHBITS)
+#define MASKED_PTR(p) ( (blockHeader*)((uintptr_t)p & HIGHBITS) )
 
 const int ALIGNMENT = 16u;  // for 64-bit, apparently
 
@@ -286,10 +287,10 @@ void logicalUnlinkBlock(blockHeader* block) {
     // called on unallocated blocks
     // logicalPrev is always valid, since we start with anchor elements in
     // buckets array, and we never try to unlink those
-    assert(block->logicalPrev);
-    block->logicalPrev->logicalNext = block->logicalNext;
+    assert(MASKED_PTR(block->logicalPrev));
+    MASKED_PTR(block->logicalPrev)->logicalNext = block->logicalNext;
     if(block->logicalNext) {
-        block->logicalNext->logicalPrev = (blockHeader*)MASKED_VALUE((uintptr_t)block->logicalPrev);
+        block->logicalNext->logicalPrev = MASKED_PTR(block->logicalPrev);
     }
 }
 
@@ -334,11 +335,11 @@ void splitBlock(blockHeader* block, size_t s) {
     // TODO: actually do this, and rebucket leftovers, assuming it's actually
     // possible
     // after carving out a new payload, there needs to be enough left
-    size_t leftover_bytes = MASKED_VALUE(block->size) - s - BLOCK_OVERHEAD; // amount that would actually be left for payload
-    if(!leftover_bytes) {
+    if(MASKED_VALUE(block->size) < (s + BLOCK_OVERHEAD)) {
         // don't even bother
         return;
     }
+    size_t leftover_bytes = MASKED_VALUE(block->size) - s - BLOCK_OVERHEAD; // amount that would actually be left for payload
     // leftover_bytes is at least ALIGNMENT, so proceed
     int hadPhysNext = getHasPhysicalNext(block);
     setBlockSize(block, s);

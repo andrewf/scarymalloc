@@ -236,7 +236,7 @@ blockHeader* newMemoryChunk(size_t minSize) {
     assert(allocationSize % ALIGNMENT == 0);
     // coallesce with previously allocated chunk if possible
     if(latestPhysicalChunk &&
-            (latestPhysicalChunk + CHUNK_OVERHEAD + latestPhysicalChunk->size) == chunkStart) {
+            (getChunkPayload(latestPhysicalChunk) + latestPhysicalChunk->size) == chunkStart) {
         // to extend the old block with new data, we'll need to save it
         // footer is at last ALIGNMENT bytes of latestPhysicalChunk
         printf("  merging with last phys chunk\n");

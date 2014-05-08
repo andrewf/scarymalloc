@@ -10,7 +10,7 @@
 /////////////////////////
 
 #define NUMBUCKETS 32 // can't go too far above bit size... be pessimistic
-#define MIN_PHYSICAL_BLOCK 0x100   // whatever
+#define MIN_PHYSICAL_BLOCK 0x10000   // whatever
 
 const unsigned long LOWESTBIT = (1ul);  // & this with something to find if block is allocated
 const unsigned long HIGHBITS = (~(1ul));
@@ -419,7 +419,6 @@ void* malloc(size_t s) {
             // split, etc
             // unlink if necessary
             splitBlock(currBlock, s);
-            setAllocated(currBlock, 1);
             logicalUnlinkBlock(currBlock);
             returnedBlock = currBlock;
             break;
@@ -438,23 +437,11 @@ void* malloc(size_t s) {
         // here the block will not be in a free list yet
         splitBlock(newBlock, s);
         // now the leftovers are in free list
-        setAllocated(newBlock, 1);
-        // bucket the leftovers, if they're big enough
         returnedBlock = newBlock;
     }
     printf("malloc returning %p for size %lu\n", getBlockPayload(returnedBlock), s);
     setAllocated(returnedBlock, 1);
     return getBlockPayload(returnedBlock);
-}
-
-void* calloc(size_t nmemb, size_t size) {
-    if(nmemb == 0 || size == 0) {
-        return NULL;
-    }
-    void* ret = malloc(nmemb*size);
-    if(!ret) { return NULL; }
-    memset(ret, 0, nmemb*size);
-    return ret;
 }
 
 blockHeader* coallesce(blockHeader* block) {
@@ -467,6 +454,7 @@ blockHeader* coallesce(blockHeader* block) {
         blockHeader* prev = getPhysicalPrev(block);
         // note that this requires the allocation bit of the original block to be unset
         if(!isAllocated(prev)) {
+            logicalUnlinkBlock(prev);
             mergeBack(prev);
             block = prev;
         }
@@ -483,6 +471,26 @@ void free(void* p) {
     setAllocated(block, 0);
     block = coallesce(block);
     reBucketBlock(block);
+}
+
+void* calloc(size_t nmemb, size_t size) {
+    if(nmemb == 0 || size == 0) {
+        return NULL;
+    }
+    void* ret = malloc(nmemb*size);
+    if(!ret) { return NULL; }
+    memset(ret, 0, nmemb*size);
+    return ret;
+}
+
+void* realloc(void* ptr, size_t newsize) {
+    // just re-allocate it, don't try anything clever
+    void* newmem = malloc(newsize);
+    if(!newmem) { return 0; }
+    blockHeader* oldBlock = (blockHeader*)((char*)ptr - sizeof(blockHeader));
+    memcpy(newmem, ptr, MASKED_VALUE(oldBlock->size)); // nbd if size is a bit larger than original request
+    free(ptr);
+    return newmem;
 }
 
 #ifdef TESTIT

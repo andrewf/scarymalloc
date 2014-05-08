@@ -18,19 +18,19 @@ install `tup`, you can do
 
     $ gcc -shared -fpic -o mymalloc.so mymalloc.c
 
-to build just the `.so`. Then you should have a mymalloc.so in your checkout.
+to build just the `.so`. Then you should have a `mymalloc.so` in your checkout.
 To use it with a program,
 you need to set the `LD_PRELOAD` environment variable to point to `mymalloc.so`.
 The simplest way to do this is by running, in a terminal.
 
-    LD_PRELOAD=/path/to/mymalloc.so yourexe
+    $ LD_PRELOAD=/path/to/mymalloc.so yourexe
 
 To run it in `gdb`, which is actually a slightly sane idea, you'll need to be
 a little more clever. You can use gdb to set environment variables, but by
 default when you `run` a program it uses bash to run it, and you probably don't
 want bash using mymalloc. Instead, you want to run (from [0])
 
-     (gdb) set exec-wrapper env 'LD_PRELOAD=./mymalloc.so'
+    (gdb) set exec-wrapper env 'LD_PRELOAD=./mymalloc.so'
 
 This will just set `LD_PRELOAD` for the program you're debugging without any
 further complications. This is set up in the `gdb` script `dbsettings`
@@ -62,9 +62,9 @@ need these three:
 
  * One for whether there's a physical previous block (false if this block
    is at the start of a physical chunk returned from sbrk). This is stored
-   in blockHeader.size
- * One for whether there's a physical next block, in blockFooter.size
- * One for whether the block is allocated, in blockHeader.logicalPrev
+   in `blockHeader.size`
+ * One for whether there's a physical next block, in `blockFooter.size`
+ * One for whether the block is allocated, in `blockHeader.logicalPrev`
 
 So they all go in the lowest bit of their host value. This turned out to
 be relatively useless, since I had to stick a whole other
@@ -109,7 +109,8 @@ hardware and data types that mymalloc relies on. If you go mucking about
 with the internals of mymalloc, it's a good idea to run this and make sure
 things are still sane. The tup build system compiles this as `unittest`.
 
-[0] http://www.zyztematik.org/?p=175#comment-1148 "GDB, LD _ PRELOAD and libc"
+[0] http://www.zyztematik.org/?p=175#comment-1148 "GDB, LD\_PRELOAD and libc"
+
 [1] http://www.cs.cmu.edu/afs/cs/academic/class/15213-f10/www/lectures/17-allocation-basic.pdf This was a nice resource for explaining the basics
 
 I also referred to the man pages for malloc and sbrk extensively, and K&R C.

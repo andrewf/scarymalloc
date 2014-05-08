@@ -1,6 +1,6 @@
 # MyMalloc
 
-Because prepending "my" to the name of a commonly used construct is a wonderful
+Because prepending "my" to the name of a commonly used construct is always a good
 disambiguator. This is a malloc implementation written for educational purposes.
 You probably shouldn't use it for anything you hold dear, except eduation.
 

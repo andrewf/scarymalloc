@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <string.h>    // for memset
 
 /////////////////////////
 // CONSTANTS/TYPES
@@ -129,8 +130,8 @@ blockHeader* initNewBlock(void* blockPosition) {
     return b;
 }
 
-void* getBlockPayload(blockHeader* block) {
-    return (void*)block + sizeof(blockHeader);
+char* getBlockPayload(blockHeader* block) {
+    return (char*)block + sizeof(blockHeader);
 }
 
 blockFooter* getFooter(blockHeader* block) {
@@ -190,8 +191,48 @@ void setBlockSize(blockHeader* block, size_t s) {
     // so we don't know how to set hasPhysicalNext in this fn, must be done by caller
 }
 
-void* getChunkPayload(memoryChunk* chunk) {
-    return (void*)chunk + sizeof(memoryChunk);
+char* getChunkPayload(memoryChunk* chunk) {
+    return (char*)chunk + sizeof(memoryChunk);
+}
+
+
+blockHeader* getPhysicalNext(blockHeader* block) {
+    return (blockHeader*)( getBlockPayload(block) + MASKED_VALUE(block->size) + sizeof(blockFooter) );
+}
+
+blockHeader* getPhysicalPrev(blockHeader* block) {
+    blockFooter* prevFoot = (blockFooter*)( (char*)block - sizeof(blockFooter) );
+    return (blockHeader*)( (char*)prevFoot - MASKED_VALUE(prevFoot->size) - sizeof(blockHeader) );
+}
+
+void logicalUnlinkBlock(blockHeader* block) {
+    // okay that this wipes out allocation bit, since this is only
+    // called on unallocated blocks
+    // block could possibly be unlinked already (notably if called
+    // from mergeBack, when merging prev with original), so we
+    // need to check whether it's linked by checking logicalPrev
+    if(MASKED_PTR(block->logicalPrev)) {
+        MASKED_PTR(block->logicalPrev)->logicalNext = block->logicalNext;
+        if(block->logicalNext) {
+            block->logicalNext->logicalPrev = MASKED_PTR(block->logicalPrev);
+        }
+    }
+    // should make debugging easier
+    // keep allocation flag, JIC
+    block->logicalPrev = (blockHeader*)( (uintptr_t)block->logicalPrev & LOWESTBIT );
+    block->logicalNext = 0;
+}
+
+void logicalLinkBlock(blockHeader* newPrev, blockHeader* block) {
+    // insert block after newPrev. newPrev -> block -> newPrev's old next
+    // this sets isAllocated(block) to false by wiping the bit
+    // but that's okay because a linked block is always unallocated
+    block->logicalPrev = newPrev;
+    block->logicalNext = newPrev->logicalNext;
+    if(block->logicalNext) {
+        block->logicalNext->logicalPrev = block;
+    }
+    newPrev->logicalNext = block;
 }
 
 blockHeader* newMemoryChunk(size_t minSize) {
@@ -233,7 +274,7 @@ blockHeader* newMemoryChunk(size_t minSize) {
     // chunkStart != 0, with length allocationSize
     // don't assume sbrk is aligned (can move chunkStart up by <= ALIGNMENT - 1,
     // so that's why we inflate the minSize
-    printf("sbrk'd %p with size %#lx\n", chunkStart, allocationSize);
+    //printf("sbrk'd %p with size %#lx\n", chunkStart, allocationSize);
     void* chunkEnd = chunkStart + allocationSize; // this one we'll round down to alignment
     chunkStart = (void*)next_aligned_value((uintptr_t)chunkStart);
     chunkEnd = (void*)( ((uintptr_t)chunkEnd)/ALIGNMENT*ALIGNMENT ); // round down to next *lowest* multiple of ALIGNMENT
@@ -245,10 +286,10 @@ blockHeader* newMemoryChunk(size_t minSize) {
             (getChunkPayload(latestPhysicalChunk) + latestPhysicalChunk->size) == chunkStart) {
         // to extend the old block with new data, we'll need to save it
         // footer is at last ALIGNMENT bytes of latestPhysicalChunk
-        printf("  merging with last phys chunk\n");
-        blockFooter* oldFooter = getChunkPayload(latestPhysicalChunk) +
-                            latestPhysicalChunk->size -
-                            sizeof(blockFooter);
+        //printf("  merging with last phys chunk\n");
+        blockFooter* oldFooter = (blockFooter*)( getChunkPayload(latestPhysicalChunk)
+                                                + latestPhysicalChunk->size
+                                                - sizeof(blockFooter) );
         blockHeader* oldBlock = (blockHeader*)((char*)oldFooter
                                               - MASKED_VALUE(oldFooter->size)
                                               - sizeof(blockHeader));
@@ -276,7 +317,7 @@ blockHeader* newMemoryChunk(size_t minSize) {
         }
     } else {
         // we've got to do it all fresh
-        printf("  making new phys chunk\n");
+        //printf("  making new phys chunk\n");
         memoryChunk* newChunk = (memoryChunk*)chunkStart;
         newChunk->older = latestPhysicalChunk;
         newChunk->size = allocationSize - CHUNK_OVERHEAD;
@@ -287,30 +328,6 @@ blockHeader* newMemoryChunk(size_t minSize) {
         // flags is correct
         return newBlock;
     }
-}
-
-void logicalUnlinkBlock(blockHeader* block) {
-    // okay that this wipes out allocation bit, since this is only
-    // called on unallocated blocks
-    // logicalPrev is always valid, since we start with anchor elements in
-    // buckets array, and we never try to unlink those
-    assert(MASKED_PTR(block->logicalPrev));
-    MASKED_PTR(block->logicalPrev)->logicalNext = block->logicalNext;
-    if(block->logicalNext) {
-        block->logicalNext->logicalPrev = MASKED_PTR(block->logicalPrev);
-    }
-}
-
-void logicalLinkBlock(blockHeader* newPrev, blockHeader* block) {
-    // insert block after newPrev. newPrev -> block -> newPrev's old next
-    // this sets isAllocated(block) to false by wiping the bit
-    // but that's okay because a linked block is always unallocated
-    block->logicalPrev = newPrev;
-    block->logicalNext = newPrev->logicalNext;
-    if(block->logicalNext) {
-        block->logicalNext->logicalPrev = block;
-    }
-    newPrev->logicalNext = block;
 }
 
 void reBucketBlock(blockHeader* block) {
@@ -359,6 +376,25 @@ void splitBlock(blockHeader* block, size_t s) {
                                                // to latter block
     reBucketBlock(newBlock);
     // don't rebucket (the original) block, since we're about to fill it
+}
+
+void mergeBack(blockHeader* block) {
+    // merge with physical next block, if it's free
+    assert(getHasPhysicalNext(block)); // caller should verify this
+    blockHeader* next = getPhysicalNext(block);
+    if(!isAllocated(next)) {
+        logicalUnlinkBlock(next);
+        int finalHasPhysNext = getHasPhysicalNext(next);
+        int finalHasPhysPrev = getHasPhysicalPrev(block);
+        // we've eliminated exactly one BLOCK_OVERHEAD of unused space
+        // block's footer, and next's header. the other pieces we keep.
+        setBlockSize(block, MASKED_VALUE(block->size) + MASKED_VALUE(next->size) + BLOCK_OVERHEAD);
+        setHasPhysicalPrev(block, finalHasPhysPrev);
+        setHasPhysicalNext(block, finalHasPhysNext);
+    }
+    // if it's allocated, nothing to do.
+    // note that the link status of block has not changed
+    // best not to have it on a list at all...
 }
     
 
@@ -411,11 +447,31 @@ void* malloc(size_t s) {
     return getBlockPayload(returnedBlock);
 }
 
-blockHeader* coallesce(blockHeader* b) {
+void* calloc(size_t nmemb, size_t size) {
+    if(nmemb == 0 || size == 0) {
+        return NULL;
+    }
+    void* ret = malloc(nmemb*size);
+    if(!ret) { return NULL; }
+    memset(ret, 0, nmemb*size);
+    return ret;
+}
+
+blockHeader* coallesce(blockHeader* block) {
     // merge with physical next and previous, if they exist
     // and are unallocated. DO NOT put on free list
-    // TODO implement
-    return b;
+    if(getHasPhysicalNext(block)) {
+        mergeBack(block);
+    }
+    if(getHasPhysicalPrev(block)) {
+        blockHeader* prev = getPhysicalPrev(block);
+        // note that this requires the allocation bit of the original block to be unset
+        if(!isAllocated(prev)) {
+            mergeBack(prev);
+            block = prev;
+        }
+    }
+    return block;
 }
 
 void free(void* p) {

@@ -13,7 +13,7 @@ build system. The commands
     $ tup init
     $ tup upd
 
-Will get everything built, including the test programs. If you don't want to
+will get everything built, including the test programs. If you don't want to
 install `tup`, you can do
 
     $ gcc -shared -fpic -o mymalloc.so mymalloc.c
@@ -21,16 +21,16 @@ install `tup`, you can do
 to build just the `.so`. Then you should have a `mymalloc.so` in your checkout.
 To use it with a program,
 you need to set the `LD_PRELOAD` environment variable to point to `mymalloc.so`.
-The simplest way to do this is by running, in a terminal.
+The simplest way to do this is by running, in a terminal:
 
     $ LD_PRELOAD=/path/to/mymalloc.so yourexe
 
 To run it in `gdb`, which is actually a slightly sane idea, you'll need to be
 a little more clever. You can use gdb to set environment variables, but by
-default when you `run` a program it uses bash to run it, and you probably don't
-want bash using mymalloc. Instead, you want to run (from [0])
+default when you `run` a program it uses bash to start it, and you probably don't
+want bash using mymalloc. Instead, you want to run (from [0]) in the `gdb` shell:
 
-    (gdb) set exec-wrapper env 'LD_PRELOAD=./mymalloc.so'
+    (gdb) set exec-wrapper env 'LD_PRELOAD=/path/to/mymalloc.so'
 
 This will just set `LD_PRELOAD` for the program you're debugging without any
 further complications. This is set up in the `gdb` script `dbsettings`
@@ -42,7 +42,8 @@ included in the repo.
 MyMalloc is designed to provide reasonably performant best-fit allocation with
 minimal overhead, with coallescing of free blocks. To
 accomplish this, free blocks are sorted into one of a single, static array of
-linked lists based on their size. All blocks are aligned on 16-byte boundaries,
+linked lists based on their size, and also keep track of their physical
+neighbors. All blocks are aligned on 16-byte boundaries,
 because x64 seems to think that's important and that's what I'm running on.
 
 In more detail: every memory block has a header and a footer, with the payload,

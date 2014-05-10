@@ -470,7 +470,7 @@ void free(void* p) {
     printf("freeing %p\n", p);
     blockHeader* block = (blockHeader*)( (char*)p - sizeof(blockHeader) );
     setAllocated(block, 0);
-    //block = coallesce(block);
+    block = coallesce(block);
     reBucketBlock(block);
 }
 

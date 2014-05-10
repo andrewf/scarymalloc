@@ -10,7 +10,7 @@
 /////////////////////////
 
 #define NUMBUCKETS 32 // can't go too far above bit size... be pessimistic
-#define MIN_PHYSICAL_BLOCK 0x10000   // whatever
+#define MIN_PHYSICAL_BLOCK 0x100   // whatever
 
 const unsigned long LOWESTBIT = (1ul);  // & this with something to find if block is allocated
 const unsigned long HIGHBITS = (~(1ul));
@@ -313,6 +313,7 @@ blockHeader* newMemoryChunk(size_t minSize) {
             oldBlock->size += allocationSize;
             getFooter(oldBlock)->size = oldBlock->size;
             // oldBlock doesn't have physical next, so we're done
+            logicalUnlinkBlock(oldBlock); // caller will bucket what needs bucketing
             return oldBlock;
         }
     } else {
@@ -469,7 +470,7 @@ void free(void* p) {
     printf("freeing %p\n", p);
     blockHeader* block = (blockHeader*)( (char*)p - sizeof(blockHeader) );
     setAllocated(block, 0);
-    block = coallesce(block);
+    //block = coallesce(block);
     reBucketBlock(block);
 }
 

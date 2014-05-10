@@ -1,8 +1,9 @@
 # MyMalloc
 
-Because prepending "my" to the name of a commonly used construct is always a good
-disambiguator. This is a malloc implementation written for educational purposes.
-You probably shouldn't use it for anything you hold dear, except eduation.
+Because prepending "my" to the name of a commonly used construct is always a
+good disambiguator. This is a malloc implementation written for educational
+purposes. You probably shouldn't use it for anything you hold dear, except
+eduation.
 
 # Usage
 ## Or, "how exactly shouldn't I use it?"
@@ -18,17 +19,18 @@ install `tup`, you can do
 
     $ gcc -shared -fpic -o mymalloc.so mymalloc.c
 
-to build just the `.so`. Then you should have a `mymalloc.so` in your checkout.
-To use it with a program,
-you need to set the `LD_PRELOAD` environment variable to point to `mymalloc.so`.
-The simplest way to do this is by running, in a terminal:
+to build just the `.so`. Then you should have a `mymalloc.so` in your
+checkout. To use it with a program, you need to set the `LD_PRELOAD`
+environment variable to point to `mymalloc.so`. The simplest way to do
+this is by running, in a terminal:
 
     $ LD_PRELOAD=/path/to/mymalloc.so yourexe
 
-To run it in `gdb`, which is actually a slightly sane idea, you'll need to be
-a little more clever. You can use gdb to set environment variables, but by
-default when you `run` a program it uses bash to start it, and you probably don't
-want bash using mymalloc. Instead, you want to run (from [0]) in the `gdb` shell:
+To run it in `gdb`, which is actually a slightly sane idea, you'll need
+to be a little more clever. You can use gdb to set environment variables
+but by default when you `run` a program it uses bash to start it, and you
+probably don't want bash using mymalloc. Instead, you want to run
+(from [0]) in the `gdb` shell:
 
     (gdb) set exec-wrapper env 'LD_PRELOAD=/path/to/mymalloc.so'
 
@@ -39,22 +41,23 @@ included in the repo.
 
 # Design
 
-MyMalloc is designed to provide reasonably performant best-fit allocation with
-minimal overhead, with coallescing of free blocks. To
-accomplish this, free blocks are sorted into one of a single, static array of
-linked lists based on their size, and also keep track of their physical
-neighbors. All blocks are aligned on 16-byte boundaries,
-because x64 seems to think that's important and that's what I'm running on.
+MyMalloc is designed to provide reasonably performant best-fit allocation
+with minimal overhead, with coallescing of free blocks. To accomplish this,
+free blocks are sorted into one of a single, static array of linked lists
+based on their size, and also keep track of their physical neighbors. All
+blocks are aligned on 16-byte boundaries, because x64 seems to think that's
+important and that's what I'm running on.
 
-In more detail: every memory block has a header and a footer, with the payload,
-the memory returned to the caller of `malloc`, between them. The header, `blockHeader`
-in the code, contains pointers to the previous and next blocks in the current free
-list, if this block is free. There is a size (which contains the payload size,
-not including the header and footer) in both the header and footer, so that if
-you have one block, you can find the header of the *physically* previous block
-for the purpose of coallescing with it. Just find the header address and subtract
-`sizeof(blockFooter)` from it, read the size, and then subtract
-`footer->size + sizeof(blockHeader)` from the footer address.
+In more detail: every memory block has a header and a footer, with the
+payload, the memory returned to the caller of `malloc`, between them. The
+header, `blockHeader` in the code, contains pointers to the previous and
+next blocks in the current free list, if this block is free. There is a size
+(which contains the payload size, not including the header and footer) in
+both the header and footer, so that if you have one block, you can find the
+header of the *physically* previous block for the purpose of coallescing with
+it. Just find the header address and subtract `sizeof(blockFooter)` from it,
+read the size, and then subtract `footer->size + sizeof(blockHeader)` from
+the footer address.
 
 I use the nice trick from [1] of storing data in the low bits of my pointers
 and sizes. In fact, since they're 16-byte aligned the lowest four bits
@@ -68,10 +71,10 @@ need these three:
  * One for whether the block is allocated, in `blockHeader.logicalPrev`
 
 So they all go in the lowest bit of their host value. This turned out to
-be relatively useless, since I had to stick a whole other
-`size_t` in both the header and footer to get them to be 16-byte aligned,
-but at least this way if someone decides to 8-byte align the whole thing it
-won't be as miserable.
+be relatively useless, since I had to stick a whole other `size_t` in both
+the header and footer to get them to be 16-byte aligned, but at least this
+way if someone decides to 8-byte align the whole thing it won't be as
+miserable.
 
 Anyway, this way every block knows where it is both in the "logical" free
 list and the "physical" space of available memory.
@@ -90,9 +93,9 @@ allocate. Starting with this index, you iterate through the buckets looking
 for a block big enough for your allocation. If you find one, unlink it
 from the free list, split it if
 possible, put the residue back on the free list, and return the front of
-the block. Note that this unlinking operation is why the blocks form a doubly-linked list.
-If there are no suitable free blocks already, create one at
-least large enough with `sbrk`. Split that, re-bucket the residue, and
+the block. Note that this unlinking operation is why the blocks form a
+doubly-linked list. If there are no suitable free blocks already, create one
+at least large enough with `sbrk`. Split that, re-bucket the residue, and
 return as much of the front as necessary.
 
 To free a block given a pointer to the payload, subtract `sizeof(blockHeader)`

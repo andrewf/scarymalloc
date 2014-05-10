@@ -1,6 +1,3 @@
 set exec-wrapper env 'LD_PRELOAD=./mymalloc.so'
-set breakpoint pending on
 set output-radix 16
-alias stk = info stack
-alias bk = info breakpoints
 break mymalloc.c:malloc

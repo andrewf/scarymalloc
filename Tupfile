@@ -1,3 +1,3 @@
-: test.c |> gcc -g -Wextra %f -o %o |> test
+: test.c |> gcc -g -D NUMPTRS=200 -Wextra %f -o %o |> test
 : mymalloc.c |> clang -g -Wextra -shared -fpic -o %o %f |> mymalloc.so
 : mymalloc.c |> clang -g -Wextra -D TESTIT %f -o %o |> unittest

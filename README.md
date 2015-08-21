@@ -1,7 +1,6 @@
-# MyMalloc
+# ScaryMalloc
 
-Because prepending "my" to the name of a commonly used construct is always a
-good disambiguator. This is a malloc implementation written for educational
+This is a 64-bit malloc implementation written for educational
 purposes. You probably shouldn't use it for anything you hold dear, except
 eduation.
 
@@ -17,22 +16,22 @@ build system. The commands
 will get everything built, including the test programs. If you don't want to
 install `tup`, you can do
 
-    $ gcc -shared -fpic -o mymalloc.so mymalloc.c
+    $ gcc -shared -fpic -o scarymalloc.so scarymalloc.c
 
-to build just the `.so`. Then you should have a `mymalloc.so` in your
+to build just the `.so`. Then you should have a `scarymalloc.so` in your
 checkout. To use it with a program, you need to set the `LD_PRELOAD`
-environment variable to point to `mymalloc.so`. The simplest way to do
+environment variable to point to `scarymalloc.so`. The simplest way to do
 this is by running, in a terminal:
 
-    $ LD_PRELOAD=/path/to/mymalloc.so yourexe
+    $ LD_PRELOAD=/path/to/scarymalloc.so yourexe
 
 To run it in `gdb`, which is actually a slightly sane idea, you'll need
-to be a little more clever. You can use gdb to set environment variables
-but by default when you `run` a program it uses bash to start it, and you
-probably don't want bash using mymalloc. Instead, you want to run
+to be a little more clever. You can use `gdb` to set environment variables
+but by default when you `run` a program `gdb` uses `bash` to start it, and you
+probably don't want `bash` using `scarymalloc`. Instead, you want to run
 (from [0]) in the `gdb` shell:
 
-    (gdb) set exec-wrapper env 'LD_PRELOAD=/path/to/mymalloc.so'
+    (gdb) set exec-wrapper env 'LD_PRELOAD=/path/to/scarymalloc.so'
 
 This will just set `LD_PRELOAD` for the program you're debugging without any
 further complications. This is set up in the `gdb` script `dbsettings`
@@ -107,11 +106,11 @@ block in the appropriate free list, sorted by size.
 An potential avenue for future research is what size of bucket array and kind
 of hash function produce the best performance.
 
-If you `#define TESTIT` when compiling mymalloc.c as a program instead of a
+If you `#define TESTIT` when compiling `scarymalloc.c` as a program instead of a
 library, the resulting program tests a number of assumptions about the
-hardware and data types that mymalloc relies on. If you go mucking about
-with the internals of mymalloc, it's a good idea to run this and make sure
-things are still sane. The tup build system compiles this as `unittest`.
+hardware and data types that `scarymalloc` relies on. If you go mucking about
+with the internals of `scarymalloc`, it's a good idea to run this and make sure
+things are still sane. The `tup` build system compiles this as `unittest`.
 
 [0] http://www.zyztematik.org/?p=175#comment-1148 "GDB, LD\_PRELOAD and libc"
 

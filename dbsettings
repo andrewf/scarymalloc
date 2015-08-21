@@ -1,4 +1,4 @@
-set exec-wrapper env 'LD_PRELOAD=./mymalloc.so'
+set exec-wrapper env 'LD_PRELOAD=./scarymalloc.so'
 set output-radix 16
-break mymalloc.c:malloc
+break scarymalloc.c:malloc
 break test.c:19

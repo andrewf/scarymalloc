@@ -1,1 +1,1 @@
-exec env LD_PRELOAD=./mymalloc.so ./test
+exec env LD_PRELOAD=./scarymalloc.so ./test
